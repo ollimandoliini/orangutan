@@ -24,6 +24,8 @@ enablePlugins(
   DockerPlugin
 )
 
+dockerExposedPorts ++= Seq(8080)
+dockerRepository := Some("europe-north1-docker.pkg.dev/orangutan-363612/orangutan")
 
 lazy val root = project
   .in(file("."))
