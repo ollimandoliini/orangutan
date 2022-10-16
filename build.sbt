@@ -1,3 +1,5 @@
+import com.typesafe.sbt.packager.docker._
+
 val scala3Version = "3.1.3"
 val Http4sVersion = "0.23.14"
 val CirceVersion = "0.14.1"

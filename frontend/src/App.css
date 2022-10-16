@@ -28,14 +28,27 @@
   color: #61dafb;
 }
 
-canvas {
-  border: 1px solid black;
-}
 
 .main {
   max-width: 1280px;
-  display: flex;
-  flex-direction: column;
+  height: 100%;
+  display: grid;
+  grid-template-columns: 3fr 1fr;
   padding: 0 1rem;
   margin: 0 auto;
+}
+
+.main-left {
+  display: grid;
+  grid-template-rows: 100px 1fr;
+  height: 100%;
+}
+
+.score-wrapper {
+  display: grid;
+}
+
+.score-line {
+  display: grid;
+  grid-template-columns: 0.3fr 2fr 1fr;
 }

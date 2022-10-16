@@ -1,68 +1,63 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import useWebSocket, { ReadyState } from "react-use-websocket";
 import "./App.css";
 
-import { Board, GameState } from "./Board";
+import { Board, BoardState } from "./Board";
 
-const ScoreBoard = (scores: Record<string, number>) => {
+type Scores = Record<string, number>;
+
+const ScoreBoard = ({ scores }: { scores: Scores }) => {
   return (
-    <>
+    <div>
       <h2>Scores</h2>
-      <ul>
-        <li></li>
-      </ul>
-    </>
+      <div className="score-wrapper">
+        {Object.entries(scores).sort(([aPlayerId, aScore], [bPlayerId, bScore]) => aScore - bScore).map(([playerId, score], index) => (
+          <div className="score-line" key={playerId}>
+            <div >{index + 1}.</div> <div>{playerId}</div> <div>{score}</div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 };
 
-type PlayerNameProps = {
-  setPlayerName: (name: string) => void;
-};
 
-const PlayerNamePrompt = ({ setPlayerName }: PlayerNameProps) => {
-  const [name, setName] = useState("");
-  return (
-    <form
-      action=""
-      onSubmit={(e) => {
-        e.preventDefault();
-        setPlayerName(name)
-        setName("");
 
-      }}
-    >
-      <label htmlFor="">
-        Name
-        <input
-          type="text"
-          name=""
-          id=""
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-      </label>
-      <button type="submit">Enter</button>
-    </form>
-  );
+type GameState = {
+  board: BoardState;
+  scores: Scores;
 };
 
 const App = () => {
   const [playerName, setPlayerName] = useState<string | null>(null);
+
+  const [gameState, setGameState] = useState<GameState>({
+    board: {},
+    scores: {},
+  });
+
   const { sendJsonMessage, lastJsonMessage } = useWebSocket<GameState>(
     playerName && `ws://localhost:8080/ws/${playerName}`
   );
+
+  useEffect(() => {
+    if (lastJsonMessage) {
+      setGameState(lastJsonMessage);
+    }
+  }, [lastJsonMessage]);
+
   return (
     <div className="main">
-      <div>
-        {playerName ? (
-          <Board
-            sendJsonMessage={sendJsonMessage}
-            lastJsonMessage={lastJsonMessage}
-          />
-        ) : (
-          <PlayerNamePrompt setPlayerName={setPlayerName} />
-        )}
+      <div className="main-left">
+        <h1>Orangutan</h1>
+        <Board
+          sendJsonMessage={sendJsonMessage}
+          boardState={gameState.board}
+          playerName={playerName}
+          setPlayerName={setPlayerName}
+        />
       </div>
+      <ScoreBoard scores={gameState.scores} />
     </div>
   );
 };

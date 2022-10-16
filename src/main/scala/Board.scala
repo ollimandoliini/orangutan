@@ -1,11 +1,10 @@
-
 import cats.syntax.all.*
 import cats.effect.IO
 import cats.effect.std.Random
 import io.circe.generic.semiauto.*
 import io.circe.parser.*
 import io.circe.{Encoder, KeyEncoder}
-
+import cats.effect.*
 
 def getNewPosition(point: Point, action: Action): Point =
   point match {
@@ -27,69 +26,40 @@ given KeyEncoder[PlayerId] = new KeyEncoder {
 case class Point(x: Int, y: Int)
 given Encoder[Point] = deriveEncoder[Point]
 
-case class GameState(
-    board: Map[Point, PlayerId]
-)
-
 case class BoardState(fw: Map[PlayerId, Point], bw: Map[Point, PlayerId])
+case class GameState(board: BoardState, scores: Map[PlayerId, Int])
 
-trait Board {
-  def setInitialPosition(p: PlayerId): IO[Unit]
-  def performAction(playerId: PlayerId, action: Action): IO[Unit]
-  def get(): IO[BoardState]
-  def update(f: BoardState => BoardState): IO[Unit]
-  def deletePlayer(playerId: PlayerId): IO[Unit]
-}
-
-object model {
-  
-}
-
-object Board {
-  def create(xDim: Int, yDim: Int, gen: Random[IO]): IO[Board] =
-    IO.ref(BoardState(Map.empty[PlayerId, Point], Map.empty[Point, PlayerId]))
-      .map { board =>
-        new Board {
-          def setInitialPosition(id: PlayerId): IO[Unit] =
-            board.access.flatMap { case (boardState, set) =>
-              IO.raiseError(new Exception("Board full"))
-                .whenA(boardState.fw.size == xDim * yDim) >>
-                (gen.nextIntBounded(xDim), gen.nextIntBounded(yDim))
-                  .mapN(Point.apply)
-                  .iterateWhile(point => boardState.bw.contains(point))
-                  .flatMap(p =>
-                    set(
-                      BoardState(
-                        boardState.fw + (id -> p),
-                        boardState.bw + (p -> id)
-                      )
-                    )
-                  )
-                  .flatMap {
-                    case true  => IO.unit
-                    case false => setInitialPosition(id)
-                  }
-            }
-          def performAction(playerId: PlayerId, action: Action): IO[Unit] =
-            board.update(boardState => movePlayer(playerId, action, boardState))
-
-          def get(): IO[BoardState] = board.get
-
-          def update(f: BoardState => BoardState) = board.update(f)
-          def deletePlayer(playerId: PlayerId) =
-            board.update(boardState => {
-              boardState.fw.get(playerId) match {
-                case Some(playerPosition) => {
-                  BoardState(
-                    boardState.fw - playerId,
-                    boardState.bw - playerPosition
-                  )
-                }
-                case None => boardState
-              }
-            })
-        }
-      }
+case class Game(
+    ref: Ref[IO, GameState],
+    xDim: Int,
+    yDim: Int,
+    gen: Random[IO]
+) {
+  def setInitialPosition(id: PlayerId): IO[Unit] = {
+    ref.access.flatMap { case (gameState, set) =>
+      IO.raiseError(new Exception("Board full"))
+        .whenA(gameState.board.fw.size == xDim * yDim) >>
+        (gen.nextIntBounded(xDim), gen.nextIntBounded(yDim))
+          .mapN(Point.apply)
+          .iterateWhile(point => gameState.board.bw.contains(point))
+          .flatMap(p => {
+            val board = BoardState(
+              gameState.board.fw + (id -> p),
+              gameState.board.bw + (p -> id)
+            )
+            val scores = gameState.scores + (id -> 0)
+            set(GameState(board, scores))
+          })
+          .flatMap {
+            case true  => IO.unit
+            case false => setInitialPosition(id)
+          }
+    }
+  }
+  def performAction(playerId: PlayerId, action: Action): IO[Unit] =
+    ref.update(gameState =>
+      gameState.copy(board = movePlayer(playerId, action, gameState.board))
+    )
 
   def movePlayer(
       playerId: PlayerId,
@@ -108,4 +78,32 @@ object Board {
       case None => boardState
     }
   }
+  def get() = ref.get
+
+  def deletePlayer(playerId: PlayerId) =
+    ref.update(gameState => {
+      gameState.board.fw.get(playerId) match {
+        case Some(playerPosition) => {
+          GameState(
+            BoardState(
+              gameState.board.fw - playerId,
+              gameState.board.bw - playerPosition
+            ),
+            gameState.scores - playerId
+          )
+        }
+        case None => gameState
+      }
+    })
+
+  def getNewPosition(point: Point, action: Action): Point =
+    point match {
+      case Point(x, y) =>
+        action match {
+          case Action.Left  => if (x > 0) then Point(x - 1, y) else point
+          case Action.Down  => if (y > 0) then Point(x, y - 1) else point
+          case Action.Right => if (x < xDim - 1 ) then Point(x + 1, y) else point
+          case Action.Up    => if (y < yDim - 1) then Point(x, y + 1) else point
+        }
+    }
 }

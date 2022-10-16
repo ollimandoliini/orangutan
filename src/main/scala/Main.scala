@@ -18,18 +18,16 @@ import org.http4s.HttpApp
 import org.http4s.HttpRoutes
 import org.http4s.StaticFile
 import org.http4s.*
-import org.http4s._
 import org.http4s.dsl.*
-import org.http4s.dsl.io._
+import org.http4s.dsl.io.*
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.implicits._
 import org.http4s.server.Router
-import org.http4s.server.staticcontent.FileService
+import org.http4s.server.staticcontent._
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
-import org.http4s.websocket.WebSocketFrame.Close
-import org.http4s.websocket.WebSocketFrame.Ping
-import org.http4s.websocket.WebSocketFrame.Text
+import org.http4s.websocket.WebSocketFrame.{Ping, Text}
+
 
 import scala.collection.immutable.ArraySeq
 import scala.concurrent.duration.DurationInt
@@ -57,17 +55,32 @@ case class Payload(
 
 given Decoder[Payload] = deriveDecoder
 
+case class WebSocketOutput(
+    board: Map[PlayerId, Point],
+    scores: Map[PlayerId, Int]
+)
+given Encoder[WebSocketOutput] = deriveEncoder
+
 object Server extends IOApp {
   def run(args: List[String]): IO[ExitCode] = {
     for {
       randomGenerator <- Random.scalaUtilRandom[IO]
-      board <- Board.create(10, 10, randomGenerator)
+      ref <- IO.ref(
+        GameState(
+          scores = Map.empty[PlayerId, Int],
+          board = BoardState(
+            fw = Map.empty[PlayerId, Point],
+            bw = Map.empty[Point, PlayerId]
+          )
+        )
+      )
+      game = Game(ref, 10, 10, randomGenerator)
 
       emberServerBuilder <- EmberServerBuilder
         .default[IO]
         .withHost(host"0.0.0.0")
         .withPort(port"8080")
-        .withHttpWebSocketApp(service(board))
+        .withHttpWebSocketApp(service(game))
         .build
         .use(server =>
           IO.delay(println(s"Server has Started at ${server.address}")) >>
@@ -78,8 +91,25 @@ object Server extends IOApp {
 
   }
 
+  def createSendStream(game: Game): Stream[IO, WebSocketFrame] = {
+    val keepAlive: Stream[IO, WebSocketFrame.Ping] =
+      Stream(Ping()).repeat.metered(10.seconds)
+
+    return Stream
+      .repeatEval(
+        game
+          .get()
+          .map(gameState =>
+            WebSocketOutput(gameState.board.fw, gameState.scores)
+          )
+      )
+      .metered(10.millis)
+      .map(x => Text(x.asJson.toString))
+      .merge(keepAlive)
+  }
+
   def receive(
-      board: Board,
+      game: Game,
       playerId: PlayerId
   )(stream: Stream[IO, WebSocketFrame]): Stream[IO, Unit] =
     stream
@@ -87,41 +117,32 @@ object Server extends IOApp {
         case Text(txt, _) =>
           decode[Payload](txt) match {
             case Right(payload) =>
-              board.performAction(playerId, payload.action)
-            case Left(err) => IO.println(err)
+              game.performAction(playerId, payload.action)
+            case Left(_) => IO.unit
           }
         case _ => IO.unit
       })
-      .onFinalize(board.deletePlayer(playerId))
+      .onFinalize(game.deletePlayer(playerId))
 
   def webSocketService(
-      board: Board
+      game: Game
   )(wsb: WebSocketBuilder2[IO]): HttpRoutes[IO] = {
     val dsl = new Http4sDsl[IO] {}
     import dsl.*
 
     HttpRoutes
-      .of[IO] { case GET -> Root / "ws" / username =>
+      .of[IO] { case GET -> Root / username =>
         val playerId = PlayerId(username)
-        val keepAlive: Stream[IO, WebSocketFrame.Ping] =
-          Stream(Ping()).repeat.metered(10.seconds)
 
-        val send: Stream[IO, WebSocketFrame.Text] = Stream
-          .repeatEval(board.get().map(_.fw))
-          .metered(10.millis)
-          .map(x => Text(x.asJson.toString))
-
-        board.setInitialPosition(playerId)
+        game.setInitialPosition(playerId)
         >>
-        wsb.build(send.merge(keepAlive), receive(board, playerId))
+        wsb.build(createSendStream(game), receive(game, playerId))
       }
   }
 
-  def service(board: Board)(wsb: WebSocketBuilder2[IO]) = Router(
-    "/" -> HttpRoutes.of[IO] { case _ =>
-      Ok("Yeah")
-    },
-    "/ws" -> webSocketService(board)(wsb)
+  def service(game: Game)(wsb: WebSocketBuilder2[IO]) = Router(
+    "/" -> fileService[IO](FileService.Config("./frontend/build")),
+    "/ws" -> webSocketService(game)(wsb)
   ).orNotFound
 
 }
