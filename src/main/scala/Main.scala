@@ -103,7 +103,7 @@ object Server extends IOApp {
             WebSocketOutput(gameState.board.fw, gameState.scores)
           )
       )
-      .metered(10.millis)
+      .metered(50.millis)
       .map(x => Text(x.asJson.toString))
       .merge(keepAlive)
   }

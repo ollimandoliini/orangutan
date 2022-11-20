@@ -35,10 +35,10 @@ const App = () => {
     board: {},
     scores: {},
   });
-
   const { sendJsonMessage, lastJsonMessage } = useWebSocket<GameState>(
-    playerName && `ws://localhost:8080/ws/${playerName}`
+    playerName && `wss://${window.location.host}/ws/${playerName}`
   );
+
 
   useEffect(() => {
     if (lastJsonMessage) {
